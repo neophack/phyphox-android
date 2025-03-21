@@ -1,5 +1,6 @@
 package de.rwth_aachen.phyphox;
 
+import android.Manifest;
 import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.app.ProgressDialog;
@@ -1187,6 +1188,24 @@ public class Experiment extends AppCompatActivity implements View.OnClickListene
                 dialog.show();
             } else {
                 experiment.export(this);
+            }
+            return true;
+        }
+
+        if (id == R.id.action_saveData) {
+            if (experiment.exporter.exportSets.size() == 0) {
+                AlertDialog.Builder builder = new AlertDialog.Builder(this);
+                builder.setMessage(res.getString(R.string.export_empty))
+                        .setTitle(R.string.saveData)
+                        .setPositiveButton(R.string.ok, new DialogInterface.OnClickListener() {
+                            public void onClick(DialogInterface dialog, int id) {
+
+                            }
+                        });
+                AlertDialog dialog = builder.create();
+                dialog.show();
+            } else {
+                experiment.saveData(this);
             }
             return true;
         }

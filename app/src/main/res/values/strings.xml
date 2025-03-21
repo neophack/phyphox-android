@@ -193,6 +193,8 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND 
     <string name="timedRunStartDelay">Start delay (s)</string>
     <string name="timedRunStopDelay">Experiment duration (s)</string>
     <string name="enableTimedRun">Do a timed run</string>
+    <string name="open">Open Data</string>
+    <string name="saveData">Save Data to local</string>
     <string name="export">Export Data</string>
     <string name="export_empty">This experiment configuration does not define any data to be exported. If this is an error, please contact the source of the QR code or configuration file.</string>
     <string name="export_subject">Data from phyphox</string>

@@ -67,6 +67,8 @@
     <string name="timedRunDialogTitle">定时运行</string>
     <string name="timedRunStartDelay">启动延迟(秒)</string>
     <string name="timedRunStopDelay">实验时长(秒)</string>
+    <string name="open">打开文件</string>
+    <string name="saveData">保存数据到本地</string>
     <string name="export">导出数据</string>
     <string name="export_subject">来自Phyphox的数据</string>
     <string name="export_pick_share">选择导出模式</string>

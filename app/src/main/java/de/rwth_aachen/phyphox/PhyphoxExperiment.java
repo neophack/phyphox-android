@@ -161,6 +161,10 @@ public class PhyphoxExperiment implements Serializable, ExperimentTimeReference.
         exporter.export(c, false);
     }
 
+    public void saveData(Activity c) {
+        exporter.saveData(c, false);
+    }
+
     //This function gets called in the main loop and takes care of any inputElements in the current experiment view
     public void handleInputViews(boolean measuring) {
         if (!loaded)

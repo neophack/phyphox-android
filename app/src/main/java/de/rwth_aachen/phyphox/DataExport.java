@@ -37,6 +37,16 @@ import java.util.Locale;
 import java.util.Vector;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
+import android.os.Environment;
+import android.content.SharedPreferences;
+import android.view.LayoutInflater;
+import android.view.View;
+import android.widget.EditText;
+import android.widget.ListView;
+import android.widget.Toast;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.Set;
 
 //The DataExport class provides export functionality for a phyphoxExperiment.
 //it provides multiple export formats and the dialogs to control them
@@ -148,7 +158,8 @@ public class DataExport implements Serializable {
             File file = new File(exportPath, "/"+getFilename(minimalistic)); // Create a file with default filename in the given path
 
             DecimalFormat format = (DecimalFormat) NumberFormat.getInstance(Locale.ENGLISH);
-            format.applyPattern("0.000000000E0");
+//            format.applyPattern("0.000000000E0");
+            format.applyPattern("0.################"); // 让小数部分尽量完整显示
             DecimalFormatSymbols dfs = format.getDecimalFormatSymbols();
             dfs.setDecimalSeparator(decimalPoint);
             format.setDecimalFormatSymbols(dfs);
@@ -437,9 +448,9 @@ public class DataExport implements Serializable {
             new ExcelFormat(),
             new CsvFormat(',', '.', "CSV (Comma, decimal point)"),
             new CsvFormat('\t', '.', "CSV (Tabulator, decimal point)"),
-            new CsvFormat(';', '.', "CSV (Semicolon, decimal point)"),
-            new CsvFormat('\t', ',', "CSV (Tabulator, decimal comma)"),
-            new CsvFormat(';', ',', "CSV (Semicolon, decimal comma)")
+//            new CsvFormat(';', '.', "CSV (Semicolon, decimal point)"),
+//            new CsvFormat('\t', ',', "CSV (Tabulator, decimal comma)"),
+//            new CsvFormat(';', ',', "CSV (Semicolon, decimal comma)")
     };
 
     //The constructor just has to store a reference to the experiment
@@ -463,6 +474,71 @@ public class DataExport implements Serializable {
         final String fileName = experiment.title.replaceAll("[^0-9a-zA-Z \\-_]", "");
         showFormatDialog(exportSets, c, minimalistic, fileName.isEmpty() ? "phyphox" : fileName);
     }
+
+    public void saveData(Activity c, boolean minimalistic) {
+        //Retrieve all the data
+        for (int i = 0; i < exportSets.size(); i++) {
+            exportSets.get(i).getData();
+        }
+        SharedPreferences prefs = c.getSharedPreferences("history_names", Context.MODE_PRIVATE);
+        Set<String> nameSet = prefs.getStringSet("names", new HashSet<>());
+        ArrayList<String> nameList = new ArrayList<>(nameSet);
+
+        AlertDialog.Builder builder = new AlertDialog.Builder(c);
+        builder.setTitle("输入或选择文件夹名");
+
+        LayoutInflater inflater = c.getLayoutInflater();
+        View dialogView = inflater.inflate(R.layout.dialog_name_input, null);
+        builder.setView(dialogView);
+
+        EditText inputField = dialogView.findViewById(R.id.edit_folder_name);
+        ListView listView = dialogView.findViewById(R.id.list_folder_names);
+        NameListAdapter adapter = new NameListAdapter(c, nameList, prefs);
+        listView.setAdapter(adapter);
+
+        listView.setOnItemClickListener((parent, view, position, id) -> {
+            inputField.setText(nameList.get(position));
+        });
+
+        builder.setPositiveButton("确认", (dialog, which) -> {
+            String fileName = inputField.getText().toString().trim().replaceAll("[^\\p{L}0-9a-zA-Z \\-_]", "");
+            if (fileName.isEmpty()) {
+                Toast.makeText(c, "文件夹名不能为空", Toast.LENGTH_SHORT).show();
+                return;
+            }
+
+            nameSet.add(fileName);
+            prefs.edit().putStringSet("names", nameSet).apply();
+            final String exprimentName = experiment.title.replaceAll("[^\\p{L}0-9a-zA-Z \\-_]", "");
+            exportFormats[1].setFilenameBase((new SimpleDateFormat("yyyy-MM-dd-HH-mm-ss")).format(new Date()));
+
+            File documentsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS);
+            if (documentsDir != null) {
+                File saveDirPhyphox = new File(documentsDir,"phyphox");
+                File saveDirExp = new File(saveDirPhyphox,exprimentName);
+                File saveDir = new File(saveDirExp, fileName);
+                if (!saveDir.exists() && !saveDir.mkdirs()) {
+                    Toast.makeText(c, "创建目录失败: " + saveDir.getAbsolutePath(), Toast.LENGTH_SHORT).show();
+                    return;
+                }
+                exportFormats[1].export(exportSets, saveDir, minimalistic, c);
+                // 检查文件是否存在且大小不为 0
+                File file = new File(saveDir, "/"+exportFormats[1].getFilename(minimalistic)); // Create a file with default filename in the given path
+                if (file.isFile() && file.length() > 0) {
+                    Toast.makeText(c, "保存成功：" + saveDir, Toast.LENGTH_SHORT).show();
+                } else {
+                    Toast.makeText(c, "保存失败：文件为空", Toast.LENGTH_SHORT).show();
+                }
+
+            } else {
+                Toast.makeText(c, "无法访问文档目录", Toast.LENGTH_SHORT).show();
+            }
+        });
+
+        builder.setNegativeButton("取消", (dialog, which) -> dialog.dismiss());
+        builder.create().show();
+    }
+
 
     //Annoying class to make the integer mutable.
     //The point is that we will show "radio buttons" when the user selects an export format. The

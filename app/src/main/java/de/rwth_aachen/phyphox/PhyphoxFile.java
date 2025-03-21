@@ -1647,6 +1647,19 @@ public abstract class PhyphoxFile {
 
         @Override
         protected void processStartTag(String tag) throws XmlPullParserException, phyphoxFileException, IOException {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                if (ContextCompat.checkSelfPermission(parent,android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                        != PackageManager.PERMISSION_GRANTED) {
+                    ActivityCompat.requestPermissions(parent,
+                            new String[]{
+                                    android.Manifest.permission.READ_EXTERNAL_STORAGE,
+                                    android.Manifest.permission.WRITE_EXTERNAL_STORAGE
+                            },
+                            100
+                    );
+//                    throw new phyphoxFileException("Need permission to save the data.");
+                }
+            }
             switch (tag.toLowerCase()) {
                 case "sensor": { //A sensor input (in the sense of android sensor)
                     double rate = getDoubleAttribute("rate", 0.); //Aquisition rate (we always request fastest rate, but average or just pick every n-th readout)

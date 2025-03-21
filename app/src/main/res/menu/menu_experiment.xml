@@ -42,4 +42,10 @@
 
     <item android:id="@+id/action_saveState" android:title="@string/save_state"
         android:orderInCategory="400" app:showAsAction="never" />
+    <item
+        android:id="@+id/action_saveData"
+        android:icon="@drawable/download"
+        android:orderInCategory="500"
+        android:title="@string/saveData"
+        app:showAsAction="always" />
 </menu>
