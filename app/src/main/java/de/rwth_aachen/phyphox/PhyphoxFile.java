@@ -1852,16 +1852,21 @@ public abstract class PhyphoxFile {
         @Override
         protected void processStartTag(String tag) throws XmlPullParserException, phyphoxFileException, IOException {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                if (ContextCompat.checkSelfPermission(parent,android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
-                        != PackageManager.PERMISSION_GRANTED) {
+                if (ContextCompat.checkSelfPermission(parent, Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
                     ActivityCompat.requestPermissions(parent,
-                            new String[]{
-                                    android.Manifest.permission.READ_EXTERNAL_STORAGE,
-                                    android.Manifest.permission.WRITE_EXTERNAL_STORAGE
+                            new String[]{Manifest.permission.READ_EXTERNAL_STORAGE
                             },
-                            100
+                            0
                     );
-//                    throw new phyphoxFileException("Need permission to save the data.");
+                    throw new phyphoxFileException("Need permission to save the data.");
+                }
+            }
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) { // 仅 Android 9 及以下请求存储权限
+                if (ContextCompat.checkSelfPermission(parent, Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+                    ActivityCompat.requestPermissions(parent,
+                            new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE},
+                            0);
+                    throw new phyphoxFileException("Need permission to save the data below android 9");
                 }
             }
             switch (tag.toLowerCase()) {
