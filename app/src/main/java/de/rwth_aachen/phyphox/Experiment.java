@@ -14,10 +14,7 @@ import android.content.pm.ResolveInfo;
 import android.content.res.Configuration;
 import android.content.res.Resources;
 import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
-import android.graphics.PorterDuff;
 import android.graphics.drawable.BitmapDrawable;
-import android.graphics.drawable.Drawable;
 import android.hardware.Sensor;
 import android.hardware.SensorManager;
 import android.location.LocationManager;
@@ -28,7 +25,6 @@ import android.os.Bundle;
 import android.os.CountDownTimer;
 import android.os.Handler;
 import android.os.PowerManager;
-import android.util.Base64;
 import android.util.Log;
 import android.util.TypedValue;
 import android.view.Gravity;
@@ -66,6 +62,10 @@ import androidx.core.app.NavUtils;
 import androidx.core.app.ShareCompat;
 import androidx.core.app.TaskStackBuilder;
 import androidx.core.content.FileProvider;
+import androidx.core.graphics.Insets;
+import androidx.core.view.OnApplyWindowInsetsListener;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowInsetsCompat;
 import androidx.core.widget.TextViewCompat;
 import androidx.fragment.app.FragmentManager;
 import androidx.preference.PreferenceManager;
@@ -78,7 +78,6 @@ import com.google.zxing.BarcodeFormat;
 import com.google.zxing.WriterException;
 import com.journeyapps.barcodescanner.BarcodeEncoder;
 
-import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.text.DateFormat;
@@ -86,6 +85,7 @@ import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.Date;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
@@ -100,7 +100,7 @@ import de.rwth_aachen.phyphox.Bluetooth.BluetoothOutput;
 import de.rwth_aachen.phyphox.Bluetooth.ConnectedBluetoothDeviceInfoAdapter;
 import de.rwth_aachen.phyphox.Bluetooth.ConnectedDeviceInfo;
 import de.rwth_aachen.phyphox.Bluetooth.UpdateConnectedDeviceDelegate;
-import de.rwth_aachen.phyphox.Camera.DepthInput;
+import de.rwth_aachen.phyphox.camera.depth.DepthInput;
 import de.rwth_aachen.phyphox.Helper.DecimalTextWatcher;
 import de.rwth_aachen.phyphox.Helper.Helper;
 import de.rwth_aachen.phyphox.NetworkConnection.NetworkConnection;
@@ -277,6 +277,8 @@ public class Experiment extends AppCompatActivity implements View.OnClickListene
             (new PhyphoxFile.loadXMLAsyncTask(intent, this)).executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
         }
 
+        Helper.setWindowInsetListenerForSystemBar(findViewById(R.id.appBarLayout));
+
     }
 
     @Override
@@ -333,6 +335,10 @@ public class Experiment extends AppCompatActivity implements View.OnClickListene
                 Toast.makeText(this, "DepthPreview: setCamera could not restart depthInput: " + e.getMessage(), Toast.LENGTH_LONG).show(); //Present message
             }
         }
+
+        if (experiment != null && experiment.cameraInput != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M)
+            experiment.cameraInput.startCameraFromProvider(this, this.getApplication());
+
         updateViewsHandler.postDelayed(updateViews, 40); //Start the "main loop" again
         startRemoteServer();  //Restart the remote server (if it is activated)
         //We do not start the measurement again automatically. If the user switched away, this might
@@ -461,6 +467,22 @@ public class Experiment extends AppCompatActivity implements View.OnClickListene
         pager.setAdapter(adapter);
         tabLayout.setupWithViewPager(pager);
         pager.addOnPageChangeListener(new TabLayout.TabLayoutOnPageChangeListener(tabLayout));
+        pager.addOnPageChangeListener(new ViewPager.OnPageChangeListener() {
+            @Override
+            public void onPageScrolled(int position, float positionOffset, int positionOffsetPixels) {}
+
+            @Override
+            public void onPageSelected(int position) {
+                for (int i = 0; i < experiment.experimentViews.size(); i++) {
+                    for (ExpView.expViewElement eve : experiment.experimentViews.elementAt(i).elements) {
+                        eve.onViewSelected(i == position);
+                    }
+                }
+            }
+
+            @Override
+            public void onPageScrollStateChanged(int state) {}
+        });
 
         for (int i = 0; i < adapter.getCount(); i++) {
             ExpViewFragment f = (ExpViewFragment)getSupportFragmentManager().findFragmentByTag("android:switcher:" + pager.getId() + ":" + adapter.getItemId(i));
@@ -560,6 +582,10 @@ public class Experiment extends AppCompatActivity implements View.OnClickListene
                     Toast.makeText(this, "DepthPreview: setCamera could not restart depthInput: " + e.getMessage(), Toast.LENGTH_LONG).show(); //Present message
                 }
             }
+
+            if (experiment.cameraInput != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M)
+                experiment.cameraInput.startCameraFromProvider(this, this.getApplication());
+
             //Start the remote server if activated
             startRemoteServer();
         } else {
@@ -1415,58 +1441,7 @@ public class Experiment extends AppCompatActivity implements View.OnClickListene
 
         //Desciption-button. Show the experiment description
         if (id == R.id.action_description) {
-            AlertDialog.Builder builder = new AlertDialog.Builder(this);
-            builder.setTitle(experiment.title);
-
-            LinearLayout ll = new LinearLayout(builder.getContext());
-            ll.setOrientation(LinearLayout.VERTICAL);
-            int marginX = (int) TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, res.getDimension(R.dimen.activity_horizontal_padding), res.getDisplayMetrics());
-            int marginY = (int) TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, res.getDimension(R.dimen.activity_vertical_padding), res.getDisplayMetrics());
-            ll.setPadding(marginX, marginY, marginX, marginY);
-
-            if (!experiment.stateTitle.isEmpty()) {
-                TextView stateLabel = new TextView(builder.getContext());
-                stateLabel.setText(experiment.stateTitle);
-                LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-                lp.setMargins(0,0,0,Math.round(res.getDimension(R.dimen.font)));
-                stateLabel.setLayoutParams(lp);
-                ll.addView(stateLabel);
-            }
-
-            TextView description = new TextView(builder.getContext());
-            description.setText(experiment.description);
-
-            ll.addView(description);
-
-            for (String label : experiment.links.keySet()) {
-                Button btn = new Button(builder.getContext());
-                btn.setText(label);
-                final String url = experiment.links.get(label);
-                btn.setOnClickListener(new View.OnClickListener() {
-                    public void onClick(View view) {
-                        Uri uri = Uri.parse(url);
-                        Intent intent = new Intent(Intent.ACTION_VIEW, uri);
-                        if (intent.resolveActivity(getPackageManager()) != null) {
-                            startActivity(intent);
-                        }
-                    }
-                });
-                ll.addView(btn);
-            }
-
-            ScrollView sv = new ScrollView(builder.getContext());
-            sv.setHorizontalScrollBarEnabled(false);
-            sv.setVerticalScrollBarEnabled(true);
-            sv.addView(ll);
-
-            builder.setView(sv);
-
-            builder.setPositiveButton(R.string.ok, new DialogInterface.OnClickListener() {
-                public void onClick(DialogInterface dialog, int id) {
-                }
-            });
-            AlertDialog dialog = builder.create();
-            dialog.show();
+            showExperimentInfo();
             return true;
         }
 
@@ -1591,6 +1566,60 @@ public class Experiment extends AppCompatActivity implements View.OnClickListene
         }
     };
 
+    public void showExperimentInfo(){
+        AlertDialog.Builder builder = new AlertDialog.Builder(this);
+        builder.setTitle(experiment.title);
+
+        LinearLayout ll = new LinearLayout(builder.getContext());
+        ll.setOrientation(LinearLayout.VERTICAL);
+        int marginX = (int) TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, res.getDimension(R.dimen.activity_horizontal_padding), res.getDisplayMetrics());
+        int marginY = (int) TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, res.getDimension(R.dimen.activity_vertical_padding), res.getDisplayMetrics());
+        ll.setPadding(marginX, marginY, marginX, marginY);
+
+        if (!experiment.stateTitle.isEmpty()) {
+            TextView stateLabel = new TextView(builder.getContext());
+            stateLabel.setText(experiment.stateTitle);
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+            lp.setMargins(0,0,0,Math.round(res.getDimension(R.dimen.font)));
+            stateLabel.setLayoutParams(lp);
+            ll.addView(stateLabel);
+        }
+
+        TextView description = new TextView(builder.getContext());
+        description.setText(experiment.description);
+
+        ll.addView(description);
+
+        for (String label : experiment.links.keySet()) {
+            Button btn = new Button(builder.getContext());
+            btn.setText(label);
+            final String url = experiment.links.get(label);
+            btn.setOnClickListener(new View.OnClickListener() {
+                public void onClick(View view) {
+                    Uri uri = Uri.parse(url);
+                    Intent intent = new Intent(Intent.ACTION_VIEW, uri);
+                    if (intent.resolveActivity(getPackageManager()) != null) {
+                        startActivity(intent);
+                    }
+                }
+            });
+            ll.addView(btn);
+        }
+
+        ScrollView sv = new ScrollView(builder.getContext());
+        sv.setHorizontalScrollBarEnabled(false);
+        sv.setVerticalScrollBarEnabled(true);
+        sv.addView(ll);
+
+        builder.setView(sv);
+
+        builder.setPositiveButton(R.string.ok, new DialogInterface.OnClickListener() {
+            public void onClick(DialogInterface dialog, int id) {
+            }
+        });
+        AlertDialog dialog = builder.create();
+        dialog.show();
+    }
 
     //Start a measurement
     public void startMeasurement() {
@@ -1804,6 +1833,7 @@ public class Experiment extends AppCompatActivity implements View.OnClickListene
     public void clearData() {
         //Clear the buffers
 
+        experiment.experimentTimeReference.registerEvent(ExperimentTimeReference.TimeMappingEvent.CLEAR);
         stopMeasurement();
 
         experiment.dataLock.lock(); //Synced, do not allow another thread to meddle here...
@@ -1814,6 +1844,7 @@ public class Experiment extends AppCompatActivity implements View.OnClickListene
         } finally {
             experiment.dataLock.unlock();
         }
+
         experiment.experimentTimeReference.reset();
         experiment.newData = true;
         experiment.newUserInput = true;
@@ -1935,16 +1966,8 @@ public class Experiment extends AppCompatActivity implements View.OnClickListene
             return;
 
         //Stop it!
-        remote.stopServer();
-
-        //Wait for the second thread and remove the instance
-        try {
-            remote.join();
-        } catch (Exception e) {
-            Log.e("stopRemoteServer", "Exception on join.", e);
-        }
+        remote.stop();
         remote = null;
-
     }
 
     //Called by remote server to stop the measurement from other thread

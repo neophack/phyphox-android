@@ -70,6 +70,10 @@ import androidx.core.app.ActivityCompat;
 import androidx.core.app.ShareCompat;
 import androidx.core.content.ContextCompat;
 import androidx.core.content.FileProvider;
+import androidx.core.graphics.Insets;
+import androidx.core.view.OnApplyWindowInsetsListener;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowInsetsCompat;
 import androidx.preference.PreferenceManager;
 
 import com.caverock.androidsvg.SVG;
@@ -79,6 +83,7 @@ import com.google.zxing.integration.android.IntentIntegrator;
 import com.google.zxing.integration.android.IntentResult;
 
 import org.apache.commons.io.FileUtils;
+
 import org.xmlpull.v1.XmlPullParser;
 import org.xmlpull.v1.XmlPullParserException;
 
@@ -96,6 +101,7 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -110,8 +116,8 @@ import java.util.zip.ZipInputStream;
 import de.rwth_aachen.phyphox.Bluetooth.Bluetooth;
 import de.rwth_aachen.phyphox.Bluetooth.BluetoothExperimentLoader;
 import de.rwth_aachen.phyphox.Bluetooth.BluetoothScanDialog;
-import de.rwth_aachen.phyphox.Camera.CameraHelper;
-import de.rwth_aachen.phyphox.Camera.DepthInput;
+import de.rwth_aachen.phyphox.camera.helper.CameraHelper;
+import de.rwth_aachen.phyphox.camera.depth.DepthInput;
 import de.rwth_aachen.phyphox.Helper.DecimalTextWatcher;
 import de.rwth_aachen.phyphox.Helper.Helper;
 import de.rwth_aachen.phyphox.Helper.RGB;
@@ -127,12 +133,14 @@ public class ExperimentList extends AppCompatActivity {
         Drawable icon;
         String title;
         String description;
+        String fullDescription;
         Set<String> resources;
         String xmlFile;
         String isTemp;
         boolean isAsset;
         int unavailableSensor;
         String isLink;
+        public Map<String, String> links;
     }
 
     //Strings which define extra information for intents starting an experiment from local files
@@ -167,6 +175,8 @@ public class ExperimentList extends AppCompatActivity {
     private HashMap<UUID, Vector<String>> bluetoothDeviceUUIDList = new HashMap<>(); //This will collect uuids of Bluetooth devices (services or characteristics) and maps them to (hidden) experiments supporting these devices
 
     PopupWindow popupWindow = null;
+
+    ExperimentShortInfo experimentShortInfo;
 
     @SuppressLint("ClickableViewAccessibility")
     private void showSupportHint() {
@@ -336,6 +346,7 @@ public class ExperimentList extends AppCompatActivity {
             ImageButton menuBtn; //A button for a context menu for local experiments (if they are not an asset)
         }
 
+
         //Construct the view for an element.
         public View getView(final int position, View convertView, ViewGroup parent) {
             Holder holder; //Holds all views. loaded from convertView or reconstructed
@@ -385,6 +396,7 @@ public class ExperimentList extends AppCompatActivity {
                                     });
                             AlertDialog dialog = builder.create();
                             dialog.show();
+
                         }
                     }
                 });
@@ -795,8 +807,10 @@ public class ExperimentList extends AppCompatActivity {
         ExperimentShortInfo shortInfo = new ExperimentShortInfo();
         shortInfo.color = new RGB(getResources().getColor(R.color.phyphox_primary)); //Icon base color
         shortInfo.description = "";
+        shortInfo.fullDescription = "";
         shortInfo.unavailableSensor = -1;
         shortInfo.resources = new ArraySet<>();
+        shortInfo.links = new LinkedHashMap<>();
         String stateTitle = null; //A title given by the user for a saved experiment state
         String category = null;
         boolean customColor = false;
@@ -895,16 +909,36 @@ public class ExperimentList extends AppCompatActivity {
                                 }
                                 break;
                             case "description": //This should give us the experiment description, but we only need the first line
-                                if (xpp.getDepth() == phyphoxDepth+1 || xpp.getDepth() == translationDepth+1) //May be in phyphox root or from a valid translation
-                                    shortInfo.description = xpp.nextText().trim().split("\n", 2)[0]; //Remove any whitespaces and take the first line until the first line break
+                                if (xpp.getDepth() == phyphoxDepth+1 || xpp.getDepth() == translationDepth+1){
+                                    shortInfo.fullDescription = xpp.nextText().trim().replaceAll("(?m) +$", "").replaceAll("(?m)^ +", "");
+                                    shortInfo.description = shortInfo.fullDescription.trim().split("\n", 2)[0];
+                                } //May be in phyphox root or from a valid translation
+                                     //Remove any whitespaces and take the first line until the first line break
                                 break;
                             case "category": //This should give us the experiment category
                                 if (xpp.getDepth() == phyphoxDepth+1 || xpp.getDepth() == translationDepth+1) //May be in phyphox root or from a valid translation
                                     category = xpp.nextText().trim();
                                 break;
                             case "link": //This should give us a link if the experiment is only a dummy entry with a link
-                                if (xpp.getDepth() == phyphoxDepth+1 || xpp.getDepth() == translationDepth+1) //May be in phyphox root or from a valid translation
-                                    link = xpp.nextText().trim();
+
+                                if (xpp.getDepth() == phyphoxDepth+1 || xpp.getDepth() == translationDepth+1){
+                                    //link = xpp.nextText().trim();
+                                    if(xpp.getAttributeValue(null, "label") != null && xpp.getAttributeValue(null, "label").equals("Wiki")){
+                                        link = xpp.nextText().trim();
+                                        shortInfo.links.put("Wiki", link);
+                                        Log.d("loadExperimentInfo", "Found link: WIKI " + link);
+                                    } else if(xpp.getAttributeValue(null, "label") != null && xpp.getAttributeValue(null, "label").equals("Video")){
+                                        link = xpp.nextText().trim();
+                                        shortInfo.links.put("Video", link);
+                                        Log.d("loadExperimentInfo", "Found link: Video " + link);
+                                    } else if(xpp.getAttributeValue(null, "label") != null && xpp.getAttributeValue(null, "label").equals("x / y / z")){
+                                        link = xpp.nextText().trim();
+                                        shortInfo.links.put("x / y / z", link);
+                                        Log.d("loadExperimentInfo", "Found link: x / y / z " + link);
+                                    }
+
+                                } //May be in phyphox root or from a valid translation
+
                                 break;
                             case "color": //This is the base color for design decisions (icon background color and category color)
                                 if (xpp.getDepth() == phyphoxDepth+1 || xpp.getDepth() == translationDepth+1) { //May be in phyphox root or from a valid translation
@@ -942,11 +976,19 @@ public class ExperimentList extends AppCompatActivity {
                                 if (!inInput || shortInfo.unavailableSensor >= 0)
                                     break;
                                 String type = xpp.getAttributeValue(null, "type");
+                                String typeFilterStr = xpp.getAttributeValue(null, "typeFilter");
+                                int typeFilter = -1;
+                                try {
+                                    typeFilter = Integer.parseInt(typeFilterStr);
+                                } catch (Exception ignored) {
+
+                                }
+                                String nameFilter = xpp.getAttributeValue(null, "nameFilter");
                                 String ignoreUnavailableStr = xpp.getAttributeValue(null, "ignoreUnavailable");
                                 boolean ignoreUnavailable = (ignoreUnavailableStr != null && Boolean.valueOf(ignoreUnavailableStr));
                                 SensorInput testSensor;
                                 try {
-                                    testSensor = new SensorInput(type, ignoreUnavailable,0, SensorInput.SensorRateStrategy.auto, 0, false, null, null, null);
+                                    testSensor = new SensorInput(type, nameFilter, typeFilter, ignoreUnavailable,0, SensorInput.SensorRateStrategy.auto, 0, false, null, null, null);
                                     testSensor.attachSensorManager(sensorManager);
                                 } catch (SensorInput.SensorException e) {
                                     shortInfo.unavailableSensor = SensorInput.getDescriptionRes(SensorInput.resolveSensorString(type));
@@ -969,6 +1011,13 @@ public class ExperimentList extends AppCompatActivity {
                                 if (!DepthInput.isAvailable()) {
                                     shortInfo.unavailableSensor = R.string.sensorDepth;
                                 }
+                                break;
+                            case "camera":
+                                PackageManager pm = this.getPackageManager();
+                                if(!inInput || shortInfo.unavailableSensor >= 0)
+                                    break;
+                                if(!pm.hasSystemFeature(PackageManager.FEATURE_CAMERA_ANY))
+                                    shortInfo.unavailableSensor = R.string.sensorCamera;
                                 break;
                             case "bluetooth":
                                 if ((!inInput && !inOutput) || shortInfo.unavailableSensor >= 0) {
@@ -2013,6 +2062,8 @@ public class ExperimentList extends AppCompatActivity {
         }
 
         Activity parentActivity = this;
+
+        Helper.setWindowInsetListenerForSystemBar(findViewById(R.id.expListHeader));
 
         //Set the on-click-listener for the credits
         View.OnClickListener ocl = new View.OnClickListener() {

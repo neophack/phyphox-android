@@ -17,7 +17,6 @@ import android.os.Build;
 import android.util.Log;
 import android.util.Xml;
 import android.view.Gravity;
-import android.widget.Toast;
 
 import androidx.annotation.RequiresApi;
 import androidx.core.app.ActivityCompat;
@@ -42,6 +41,7 @@ import java.net.URL;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.Vector;
 import java.util.regex.Matcher;
@@ -54,8 +54,9 @@ import de.rwth_aachen.phyphox.Bluetooth.BluetoothOutput;
 import de.rwth_aachen.phyphox.Bluetooth.ConversionsConfig;
 import de.rwth_aachen.phyphox.Bluetooth.ConversionsInput;
 import de.rwth_aachen.phyphox.Bluetooth.ConversionsOutput;
-import de.rwth_aachen.phyphox.Camera.CameraHelper;
-import de.rwth_aachen.phyphox.Camera.DepthInput;
+import de.rwth_aachen.phyphox.camera.helper.CameraHelper;
+import de.rwth_aachen.phyphox.camera.CameraInput;
+import de.rwth_aachen.phyphox.camera.depth.DepthInput;
 import de.rwth_aachen.phyphox.Helper.Helper;
 import de.rwth_aachen.phyphox.Helper.RGB;
 import de.rwth_aachen.phyphox.NetworkConnection.Mqtt.MqttCsv;
@@ -66,12 +67,13 @@ import de.rwth_aachen.phyphox.NetworkConnection.NetworkConnection;
 import de.rwth_aachen.phyphox.NetworkConnection.NetworkConversion;
 import de.rwth_aachen.phyphox.NetworkConnection.NetworkDiscovery;
 import de.rwth_aachen.phyphox.NetworkConnection.NetworkService;
+import de.rwth_aachen.phyphox.camera.model.ShowCameraControls;
 
 //phyphoxFile implements the loading of an experiment from a *.phyphox file as well as the copying
 //of a remote phyphox-file to the local collection. Both are implemented as an AsyncTask
 public abstract class PhyphoxFile {
 
-    public final static String phyphoxFileVersion = "1.18";
+    public final static String phyphoxFileVersion = "1.19";
 
     //translation maps any term for which a suitable translation is found to the current locale or, as fallback, to English
     private static Map<String, String> translation = new HashMap<>();
@@ -432,9 +434,23 @@ public abstract class PhyphoxFile {
                     break;
                 }
                 case "tone": {
+                    String parameter = getStringAttribute("waveform");
+                    if(parameter == null)
+                        parameter = "sine";
+                    AudioOutput.Waveform waveform = AudioOutput.Waveform.SINE;
+                    switch (parameter){
+                        case "square":
+                            waveform = AudioOutput.Waveform.SQUARE;
+                            break;
+                        case "sawtooth":
+                            waveform = AudioOutput.Waveform.SAWTOOTH;
+                            break;
+                        default:
+                            break;
+                    }
                     if (level == 1) {
                         //Tone plugin
-                        currentPlugin = audioOutput.new AudioOutputPluginTone();
+                        currentPlugin = audioOutput.new AudioOutputPluginTone(waveform);
                     } else {
                         throw new phyphoxFileException("Unexpected tone tag.", xpp.getLineNumber());
                     }
@@ -536,6 +552,8 @@ public abstract class PhyphoxFile {
 
                     short offset = (short)getIntAttribute("offset", 0);
 
+                    boolean keep = getBooleanAttribute("keep", true);
+
                     // check if buffer exists
                     String bufferName = getText();
                     DataBuffer buffer = experiment.getBuffer(bufferName);
@@ -543,7 +561,7 @@ public abstract class PhyphoxFile {
                         throw new phyphoxFileException("Buffer \"" + bufferName + "\" not defined.", xpp.getLineNumber());
                     }
 
-                    inputList.add(new DataInput(buffer, false));
+                    inputList.add(new DataInput(buffer, keep));
 
                     // add data to characteristics
                     characteristics.add(new Bluetooth.OutputData(uuid, inputList.size()-1, outputConversionFunction, offset));
@@ -1207,7 +1225,7 @@ public abstract class PhyphoxFile {
             Long systemTime = Long.parseLong(systemTimeStr);
             if (experimentTime < 0 || systemTime < 0)
                 throw new phyphoxFileException("An event requires both, an experiment time and a system time.", xpp.getLineNumber());
-            experiment.experimentTimeReference.timeMappings.add(experiment.experimentTimeReference.new TimeMapping(event, experimentTime, 0, systemTime));
+            experiment.experimentTimeReference.timeMappings.add(new ExperimentTimeReference.TimeMapping(event, experimentTime, 0, systemTime));
         }
 
     }
@@ -1279,6 +1297,9 @@ public abstract class PhyphoxFile {
                     boolean scientific = getBooleanAttribute("scientific", false);
                     double size = getDoubleAttribute("size", 1.0);
                     RGB color = getColorAttribute("color", new RGB(parent.getResources().getColor(R.color.phyphox_white_100)));
+                    String format = getStringAttribute("format");
+                    String positiveUnit = getTranslatedAttribute("positiveUnit");
+                    String negativeUnit = getTranslatedAttribute("negativeUnit");
                     //Allowed input/output configuration
                     Vector<ioBlockParser.AdditionalTag> ats = new Vector<>();
                     ioBlockParser.ioMapping[] inputMapping = {
@@ -1318,6 +1339,10 @@ public abstract class PhyphoxFile {
                     ve.setFactor(factor); //A conversion factor. Usually for the unit
                     ve.setSize(size); //A conversion factor. Usually for the unit
                     ve.setColor(color);
+                    ve.setGpsFormat(format); // Format for Lat Long to represent in degree/degree-minutes/degree-minutes-seconds
+                    //A unit to represent direction for gps location
+                    ve.setPositiveUnit(positiveUnit);
+                    ve.setNegativeUnit(negativeUnit);
                     newView.elements.add(ve);
                     break;
                 }
@@ -1340,7 +1365,8 @@ public abstract class PhyphoxFile {
                     newView.elements.add(infoe);
                     break;
                 }
-                case "separator": //An info element just shows some text
+                case "separator": {
+                    //An info element just shows some text
                     ExpView.separatorElement separatore = newView.new separatorElement(null, null, parent.getResources()); //No inputs, just the label and resources
                     RGB c = getColorAttribute("color", new RGB(parent.getResources().getColor(R.color.phyphox_black_60)));
                     float height = (float)getDoubleAttribute("height", 0.1);
@@ -1348,10 +1374,12 @@ public abstract class PhyphoxFile {
                     separatore.setHeight(height);
                     newView.elements.add(separatore);
                     break;
+                }
                 case "graph": { //A graph element displays a graph of an y array or two arrays x and y
                     double aspectRatio = getDoubleAttribute("aspectRatio", 2.5);
                     String lineStyle = getStringAttribute("style"); //Line style defaults to "line", but may be "dots"
                     int mapWidth= getIntAttribute("mapWidth", 0);
+                    boolean showColorScale = getBooleanAttribute("showColorScale", true);
                     boolean partialUpdate = getBooleanAttribute("partialUpdate", false);
                     int history = getIntAttribute("history", 1);
                     String labelX = getTranslatedAttribute("labelX");
@@ -1405,6 +1433,8 @@ public abstract class PhyphoxFile {
                     int xPrecision = getIntAttribute("xPrecision", -1);
                     int yPrecision = getIntAttribute("yPrecision", -1);
                     int zPrecision = getIntAttribute("zPrecision", -1);
+
+                    boolean suppressScientificNotation = getBooleanAttribute("suppressScientificNotation", false);
                     RGB color = new RGB(parent.getResources().getColor(R.color.phyphox_primary));
                     boolean globalColor = false;
                     if (xpp.getAttributeValue(XmlPullParser.NO_NAMESPACE, "color") != null) {
@@ -1465,6 +1495,7 @@ public abstract class PhyphoxFile {
                     if (lineStyle != null) {
                         ge.setStyle(GraphView.styleFromStr(lineStyle));
                     }
+                    ge.setShowColorScale(showColorScale);
                     ge.setMapWidth(mapWidth);
                     ge.setColorScale(colorScale);
                     ge.setLineWidth(lineWidth);
@@ -1479,6 +1510,8 @@ public abstract class PhyphoxFile {
                     ge.setTimeAxes(timeOnX, timeOnY, systemTime, linearTime, hideTimeMarkers);
                     ge.setLogScale(logX, logY, logZ); //logarithmic scales for x/y axes
                     ge.setPrecision(xPrecision, yPrecision, zPrecision); //logarithmic scales for x/y axes
+                    ge.setSuppressScientificNotation(suppressScientificNotation);
+
                     if (!globalColor) {
                         for (int i = 0; i < Math.ceil(ats.size() / 3); i++) {
                             switch (i % 6) {
@@ -1541,6 +1574,7 @@ public abstract class PhyphoxFile {
                     boolean signed = getBooleanAttribute("signed", true);
                     boolean decimal = getBooleanAttribute("decimal", true);
                     double defaultValue = getDoubleAttribute("default", 0.);
+                    boolean isEditable = getBooleanAttribute("editable", true);
 
                     double min = getDoubleAttribute("min", Double.NEGATIVE_INFINITY);
                     double max = getDoubleAttribute("max", Double.POSITIVE_INFINITY);
@@ -1558,10 +1592,12 @@ public abstract class PhyphoxFile {
                     ie.setDecimal(decimal); //May the user enter a decimal point (non-integer values)?
                     ie.setDefaultValue(defaultValue); //Default value before the user entered anything
                     ie.setLimits(min, max);
+                    ie.setEditable(isEditable);
                     newView.elements.add(ie);
                     break;
                 }
                 case "button": { //The edit element can take input from the user
+                    String dynamicBuffer = getStringAttribute("dynamicLabel");
                     //Allowed input/output configuration
                     Vector<ioBlockParser.AdditionalTag> ats = new Vector<>();
                     ioBlockParser.ioMapping[] inputMapping = {
@@ -1572,7 +1608,9 @@ public abstract class PhyphoxFile {
                     };
                     (new ioBlockParser(xpp, experiment, parent, inputs, outputs, inputMapping, outputMapping, null, ats)).process(); //Load inputs and outputs
 
-                    ExpView.buttonElement be = newView.new buttonElement(label, null, null, parent.getResources()); //This one is user-event driven and does not regularly read or write values
+                    String outputValue = (dynamicBuffer != null) ? dynamicBuffer : outputs.get(0).buffer.name;
+
+                    ExpView.buttonElement be = newView.new buttonElement(label, outputValue, null, parent.getResources()); //This one is user-event driven and does not regularly read or write values
                     be.setIO(inputs, outputs);
                     Vector<String> triggers = new Vector<>();
                     for (ioBlockParser.AdditionalTag at : ats) {
@@ -1580,21 +1618,53 @@ public abstract class PhyphoxFile {
                             continue;
                         if (at.name.equals("output"))
                             continue;
+                        if (at.name.equals("map")) {
+                            ExpView.buttonElement.ButtonMapping map = be.new ButtonMapping(translate(at.content, parent));
+                            if (at.attributes.containsKey("min")) {
+                                try {
+                                    map.min = Double.valueOf(at.attributes.get("min"));
+                                } catch (Exception e) {
+                                    throw new phyphoxFileException("Could not parse min of map tag.", xpp.getLineNumber());
+                                }
+                            }
+                            if (at.attributes.containsKey("max")) {
+                                try {
+                                    map.max = Double.valueOf(at.attributes.get("max"));
+                                } catch (Exception e) {
+                                    throw new phyphoxFileException("Could not parse max of map tag.", xpp.getLineNumber());
+                                }
+                            }
+                            be.addMapping(map);
+                            continue;
+                        }
                         if (!at.name.equals("trigger")) {
                             throw new phyphoxFileException("Unknown tag " + at.name + " found by ioBlockParser.", xpp.getLineNumber());
                         }
+
                         triggers.add(at.content);
                     }
+
+
+                    if(dynamicBuffer != null){
+                        DataBuffer buffer = experiment.getBuffer(dynamicBuffer);
+                        if(buffer == null){
+                            throw new phyphoxFileException("Could not parse buffer with name " + dynamicBuffer, xpp.getLineNumber());
+                        }
+                        be.setBuffer(buffer);
+                    }
+
                     be.setTriggers(triggers);
                     newView.elements.add(be);
                     break;
                 }
-                case "depth-gui": //GUI for the depth input (LiDAR/ToF)
+                case "depth-gui": {
+                    //GUI for the depth input (LiDAR/ToF)
                     double aspectRatio = getDoubleAttribute("aspectRatio", 2.5);
                     ExpView.depthGuiElement dge = newView.new depthGuiElement(label, null, null, parent.getResources()); //Two array inputs
                     dge.setAspectRatio(aspectRatio);
                     newView.elements.add(dge);
                     break;
+                }
                 case "image": { // Shows an image
                     String src = getStringAttribute("src");
                     if (src == null || src.isEmpty())
@@ -1629,6 +1699,140 @@ public abstract class PhyphoxFile {
 
                     newView.elements.add(img);
                     experiment.resources.add(src);
+                    break;
+                }
+                case "camera-gui": {
+                    String showControls = getStringAttribute("show_controls");
+                    if (showControls == null) {
+                        showControls = "full_view_only";
+                    } else {
+                        showControls = showControls.toLowerCase();
+                    }
+
+                    int exposureAdjustmentLevel = getIntAttribute("exposure_adjustment_level", 1);
+
+                    ShowCameraControls showCameraControls;
+                    switch (showControls){
+                        case "always":{
+                            showCameraControls = ShowCameraControls.Always;
+                            break;
+                        } case "never": {
+                            showCameraControls = ShowCameraControls.Never;
+                            break;
+                        } case "full_view_only": {
+                            showCameraControls = ShowCameraControls.FullViewOnly;
+                            break;
+                        }
+                        default: {
+                            throw new phyphoxFileException("Unknown show controls name: " + showControls, xpp.getLineNumber());
+                        }
+                    }
+
+                    boolean grayscale = getBooleanAttribute("grayscale", false);
+                    RGB markOverexposure = getColorAttribute("markOverexposure", null);
+                    RGB markUnderexposure = getColorAttribute("markUnderexposure", null);
+
+                    ExpView.cameraElement cameraElement = newView.new cameraElement(label, null, null, parent.getResources());
+                    cameraElement.applyControlSettings(showCameraControls, exposureAdjustmentLevel);
+                    cameraElement.setPreviewParameters(grayscale, markOverexposure, markUnderexposure);
+                    newView.elements.add(cameraElement);
+                    break;
+                }
+                case "toggle": {
+
+                    String defaultValue = getStringAttribute("defaultValue");
+
+                    //Allowed input/output configuration
+                    ioBlockParser.ioMapping[] outputMapping = {
+                            new ioBlockParser.ioMapping() {{name = "out"; asRequired = false; minCount = 1; maxCount = 1; }}
+                    };
+                    (new ioBlockParser(xpp, experiment, parent, null, outputs, null, outputMapping, null)).process(); //Load inputs and outputs
+
+
+                    ExpView.toggleElement toggleElement = newView.new toggleElement(label, outputs.get(0).buffer.name, null, parent.getResources());
+                    toggleElement.setDefaultValue(defaultValue);
+                    newView.elements.add(toggleElement);
+                    break;
+
+                }
+                case "dropdown": {
+                    String defaultValue = getStringAttribute("defaultValue");
+                    RGB color = getColorAttribute("color", new RGB(parent.getResources().getColor(R.color.phyphox_white_100)));
+
+                    Vector<ioBlockParser.AdditionalTag> ats = new Vector<>();
+                    //Allowed output configuration
+                    ioBlockParser.ioMapping[] outputMapping = {
+                            new ioBlockParser.ioMapping() {{name = "out"; asRequired = false; minCount = 1; maxCount = 1; }}
+                    };
+                    (new ioBlockParser(xpp, experiment, parent, null, outputs, null, outputMapping, null, ats)).process(); //Load inputs and outputs
+
+                    ExpView.dropDownElement dropDownElement = newView.new dropDownElement(label, outputs.get(0).buffer.name, null, parent.getResources());
+                    dropDownElement.setDefaultValue(defaultValue);
+                    dropDownElement.setColor(color);
+                    for(ioBlockParser.AdditionalTag at: ats){
+                        if(at.name.equals("output")){
+                            continue;
+                        }
+                        if (!at.name.equals("map")) {
+                            throw new phyphoxFileException("Unknown tag "+at.name+" found by ioBlockParser.", xpp.getLineNumber());
+                        }
+                        ExpView.dropDownElement.Mapping map = dropDownElement.new Mapping(translate(at.content, parent));
+                        if(at.attributes.containsKey("value")){
+                            try {
+                                map.value = at.attributes.get("value");
+                            } catch (Exception e){
+                                throw new phyphoxFileException("Could not parse value tag.", xpp.getLineNumber());
+                            }
+                        }
+                        dropDownElement.addMapping(map);
+                    }
+
+
+                    newView.elements.add(dropDownElement);
+                    break;
+
+                }
+                case "slider" : {
+                    String defaultValue = getStringAttribute("defaultValue");
+                    String minValue = getStringAttribute("minValue");
+                    String maxValue = getStringAttribute("maxValue");
+                    String stepSize = getStringAttribute("stepSize");
+                    String precision = getStringAttribute("precision");
+                    String type = getStringAttribute("type");
+                    Boolean showValue = getBooleanAttribute("showValue", true);
+                    RGB color = getColorAttribute("color", new RGB(parent.getResources().getColor(R.color.phyphox_white_100)));
+
+                    ExpView.SliderType sliderType = (Objects.equals(type, "range")) ? ExpView.SliderType.Range : ExpView.SliderType.Normal;
+
+                    Vector<String> outStrings = new Vector<>();
+                    if(sliderType == ExpView.SliderType.Normal){
+                        ioBlockParser.ioMapping[] outputMapping = {
+                                new ioBlockParser.ioMapping() {{name = "out"; asRequired = false; minCount = 1; maxCount = 1; }}
+                        };
+                        (new ioBlockParser(xpp, experiment, parent, null, outputs, null, outputMapping, null)).process(); //Load inputs and outputs
+                        outStrings.add(outputs.get(0).buffer.name);
+                    } else {
+                        ioBlockParser.ioMapping[] outputMapping = {
+                                new ioBlockParser.ioMapping() {{name = "lowerValue"; asRequired = false; minCount = 1; maxCount = 1; }},
+                                new ioBlockParser.ioMapping() {{name = "upperValue"; asRequired = false; minCount = 1; maxCount = 1; }}
+                        };
+                        (new ioBlockParser(xpp, experiment, parent, null, outputs, null, outputMapping, "value")).process(); //Load inputs and outputs
+
+                        outStrings.add(outputs.get(0).buffer.name);
+                        outStrings.add(outputs.get(1).buffer.name);
+                    }
+
+                    ExpView.sliderElement sliderElement = newView.new sliderElement(label, outStrings, null, parent.getResources());
+                    sliderElement.setDefaultValue(defaultValue);
+                    sliderElement.setColor(color);
+                    sliderElement.setMinValue(minValue);
+                    sliderElement.setMaxValue(maxValue);
+                    sliderElement.setStepSize(stepSize);
+                    sliderElement.setPrecision(precision);
+                    sliderElement.setType(sliderType);
+                    sliderElement.setShowValue(showValue);
+
+                    newView.elements.add(sliderElement);
                     break;
                 }
                 default: //Unknown tag...
@@ -1676,6 +1880,8 @@ public abstract class PhyphoxFile {
                     }
 
                     String type = getStringAttribute("type");
+                    int typeFilter = getIntAttribute("typeFilter", -1);
+                    String nameFilter = getStringAttribute("nameFilter");
                     boolean ignoreUnavailable = getBooleanAttribute("ignoreUnavailable", false);
 
                     //Allowed input/output configuration
@@ -1692,7 +1898,7 @@ public abstract class PhyphoxFile {
 
                     //Add a sensor. If the string is unknown, sensorInput throws a phyphoxFileException
                     try {
-                        experiment.inputSensors.add(new SensorInput(type, ignoreUnavailable, rate, rateStrategy, stride, average, outputs, experiment.dataLock, experiment.experimentTimeReference));
+                        experiment.inputSensors.add(new SensorInput(type, nameFilter, typeFilter, ignoreUnavailable, rate, rateStrategy, stride, average, outputs, experiment.dataLock, experiment.experimentTimeReference));
                         experiment.inputSensors.lastElement().attachSensorManager(parent.sensorManager);
                     } catch (SensorInput.SensorException e) {
                         throw new phyphoxFileException(e.getMessage(), xpp.getLineNumber());
@@ -1858,6 +2064,114 @@ public abstract class PhyphoxFile {
                     }
 
                     break;
+                }
+                case "camera": {
+                    if(Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP)
+                        throw new phyphoxFileException("Camera is only supported from API level 21 upwards (Android 5)");
+                    else {
+                        //Check for camera permission
+                        if (ContextCompat.checkSelfPermission(parent, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+                            //No permission? Request it (Android 6+, only)
+                            ActivityCompat.requestPermissions(parent, new String[]{Manifest.permission.CAMERA}, 0);
+                            throw new phyphoxFileException("Need permission to access the camera."); //We will throw an error here, but when the user grants the permission, the activity will be restarted from the permission callback
+                        }
+
+                        boolean autoExposure = getBooleanAttribute("auto_exposure", true);
+
+                        String aeStrategyStr = getStringAttribute("aeStrategy");
+                        if (aeStrategyStr == null) {
+                            aeStrategyStr = "mean";
+                        }
+
+                        CameraInput.AEStrategy aeStrategy;
+                        switch (aeStrategyStr) {
+                            case "mean": {
+                                aeStrategy = CameraInput.AEStrategy.mean;
+                                break;
+                            }
+                            case "avoidOverexposure": {
+                                aeStrategy = CameraInput.AEStrategy.avoidOverexposure;
+                                break;
+                            }
+                            case "avoidUnderexposure": {
+                                aeStrategy = CameraInput.AEStrategy.avoidUnderxposure;
+                                break;
+                            }
+                            default: {
+                                throw new phyphoxFileException("Unknown aeStrategy: " + aeStrategyStr, xpp.getLineNumber());
+                            }
+                        }
+
+                        String featureStr = getStringAttribute("feature");
+                        if(featureStr == null)
+                            featureStr = "photometric";
+                        else featureStr = featureStr.toLowerCase();
+
+                        CameraInput.PhyphoxCameraFeature feature;
+                        switch (featureStr){
+                            case "photometric": {
+                                feature = CameraInput.PhyphoxCameraFeature.Photometric;
+                                break;
+                            }
+                            default: {
+                                throw new phyphoxFileException("Unknown feature name: " + featureStr, xpp.getLineNumber());
+                            }
+                        }
+
+                        String lockedSetting = getStringAttribute("locked");
+                        if (lockedSetting == null)
+                            lockedSetting = "";
+
+                        double x1user = getDoubleAttribute("x1", 0.4);
+                        double x2user = getDoubleAttribute("x2", 0.6);
+                        double y1user = getDoubleAttribute("y1", 0.4);
+                        double y2user = getDoubleAttribute("y2", 0.6);
+
+                        //Careful: We will translate the user coordinate system to the camera coordinate system: x -> -y, y -> -x
+                        double x1 = 1.0 - y1user;
+                        double x2 = 1.0 - y2user;
+                        double y1 = 1.0 - x1user;
+                        double y2 = 1.0 - x2user;
+
+                        double thresholdAnalyzerThreshold = getDoubleAttribute("threshold", 0.5);
+
+                        //Allowed input/output configuration
+                        ioBlockParser.ioMapping[] outputMapping = {
+                                new ioBlockParser.ioMapping() {{name = "t"; asRequired = true; minCount = 0; maxCount = 1; valueAllowed = false;}},
+                                new ioBlockParser.ioMapping() {{name = "luma"; asRequired = true; minCount = 0; maxCount = 1; valueAllowed = false;}},
+                                new ioBlockParser.ioMapping() {{name = "luminance"; asRequired = true; minCount = 0; maxCount = 1; valueAllowed = false;}},
+                                new ioBlockParser.ioMapping() {{name = "hue"; asRequired = true; minCount = 0; maxCount = 1; valueAllowed = false;}},
+                                new ioBlockParser.ioMapping() {{name = "saturation"; asRequired = true; minCount = 0; maxCount = 1; valueAllowed = false;}},
+                                new ioBlockParser.ioMapping() {{name = "value"; asRequired = true; minCount = 0; maxCount = 1; valueAllowed = false;}},
+                                new ioBlockParser.ioMapping() {{name = "threshold"; asRequired = true; minCount = 0; maxCount = 1; valueAllowed = false;}},
+                                new ioBlockParser.ioMapping() {{name = "shutterSpeed"; asRequired = true; minCount = 0; maxCount = 1; valueAllowed = false;}},
+                                new ioBlockParser.ioMapping() {{name = "iso"; asRequired = true; minCount = 0; maxCount = 1; valueAllowed = false;}},
+                                new ioBlockParser.ioMapping() {{name = "aperture"; asRequired = true; minCount = 0; maxCount = 1; valueAllowed = false;}},
+                        };
+
+                        //String availableCameraSettings = getStringAttribute("setting");
+                        //ArrayList<ExposureSettingMode> availableSettings = CameraHelper.convertInputSettingToSettingMode(availableCameraSettings);
+
+                        Vector<DataOutput> outputs = new Vector<>();
+                        (new ioBlockParser(xpp, experiment, parent, null, outputs, null, outputMapping, "component")).process(); //Load inputs and outputs
+
+                        experiment.cameraInput= new CameraInput(
+                                (float) x1,
+                                (float) x2,
+                                (float) y1,
+                                (float) y2,
+                                outputs,
+                                experiment.dataLock,
+                                experiment.experimentTimeReference,
+                                feature,
+                                autoExposure,
+                                lockedSetting.isEmpty() ? null : lockedSetting,
+                                aeStrategy,
+                                thresholdAnalyzerThreshold);
+
+                        break;
+
+                    }
                 }
                 case "bluetooth": { //A bluetooth input
                         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.JELLY_BEAN_MR2 || !Bluetooth.isSupported(parent)) {
@@ -2204,6 +2518,21 @@ public abstract class PhyphoxFile {
                     (new ioBlockParser(xpp, experiment, parent, inputs, outputs, inputMapping, outputMapping, "as")).process(); //Load inputs and outputs
 
                     experiment.analysis.add(new Analysis.timerAM(experiment, inputs, outputs, linearTime));
+                } break;
+                case "info": {
+
+                    //Allowed input/output configuration
+                    ioBlockParser.ioMapping[] inputMapping = {
+                            new ioBlockParser.ioMapping() {},
+                    };
+                    ioBlockParser.ioMapping[] outputMapping = {
+                            new ioBlockParser.ioMapping() {{name = "batteryLevel"; asRequired = false; minCount = 0; maxCount = 1; repeatableOffset = -1; }},
+                            new ioBlockParser.ioMapping() {{name = "wifiSignalStrength"; asRequired = true; minCount = 0; maxCount = 1; repeatableOffset = -1; }},
+                            new ioBlockParser.ioMapping() {{name = "systemVolume"; asRequired = true; minCount = 0; maxCount = 1; repeatableOffset = -1; }},
+                    };
+                    (new ioBlockParser(xpp, experiment, parent, inputs, outputs, inputMapping, outputMapping, "as")).process(); //Load inputs and outputs
+
+                    experiment.analysis.add(new Analysis.infoAM(experiment, inputs, outputs, parent.getBaseContext()));
                 } break;
                 case "formula": {
                     String formula = getStringAttribute("formula");
@@ -3017,6 +3346,7 @@ public abstract class PhyphoxFile {
                         String nameFilter = getStringAttribute("name");
                         String addressFilter = getStringAttribute("address");
                         String uuidFilterStr = getStringAttribute("uuid");
+
                         UUID uuidFilter = null;
                         if (uuidFilterStr != null && !uuidFilterStr.isEmpty()) {
                             try {
@@ -3121,6 +3451,7 @@ public abstract class PhyphoxFile {
                 experiment.message = input.errorMessage;
                 return experiment;
             }
+
             experiment.isLocal = input.isLocal; //The experiment needs to know if it is local
             experiment.source = input.source;
             experiment.crc32 = input.crc32;

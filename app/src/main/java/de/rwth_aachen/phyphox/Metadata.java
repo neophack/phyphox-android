@@ -14,15 +14,10 @@ import org.apache.commons.codec.digest.DigestUtils;
 
 import java.util.UUID;
 
-import de.rwth_aachen.phyphox.Camera.CameraHelper;
-import de.rwth_aachen.phyphox.Camera.DepthInput;
-import de.rwth_aachen.phyphox.ExperimentList;
-import de.rwth_aachen.phyphox.PhyphoxFile;
-import de.rwth_aachen.phyphox.SensorInput;
+import de.rwth_aachen.phyphox.camera.helper.CameraHelper;
+import de.rwth_aachen.phyphox.camera.depth.DepthInput;
 
 import static android.content.Context.SENSOR_SERVICE;
-
-import androidx.annotation.RequiresApi;
 
 public class Metadata {
 
@@ -123,7 +118,7 @@ public class Metadata {
             case sensorMetadata:
                 SensorManager sensorManager = (SensorManager) ctx.getSystemService(SENSOR_SERVICE);
                 try {
-                    SensorInput testSensor = new SensorInput(sensor.name(), true, 0, SensorInput.SensorRateStrategy.auto, 0, false, null, null, null);
+                    SensorInput testSensor = new SensorInput(sensor.name(), null, -1, true, 0, SensorInput.SensorRateStrategy.auto, 0, false, null, null, null);
                     testSensor.attachSensorManager(sensorManager);
                     if (testSensor.sensor == null)
                         return null;

@@ -7,6 +7,7 @@ buildscript {
     }
 
     dependencies {
+        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:1.7.20"
         classpath 'com.android.tools.build:gradle:8.3.2'
 
         // NOTE: Do not place your application dependencies here; they belong
@@ -15,10 +16,11 @@ buildscript {
 }
 
 ext{
-    compileSdkVersion = 34
+    compileSdkVersion = 35
     serviceVersion = '1.1.1' //Paho MQTT Service
     clientVersion = '1.1.0' //Paho MQTT Client
     serviceArchivesBaseName = 'org.eclipse.paho.android.service'
+    kotlin_version = '1.7.20'
 }
 
 allprojects {
